@@ -118,6 +118,52 @@
 
         </div>
 
+        <!-- Registered Bus Stops Catalog Section -->
+        <div class="content-card" style="margin-top: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color);">
+                <div>
+                    <h3 style="font-size: 1.25rem; color: var(--ksrtc-dark); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                        <span>🚏</span> Registered Transit Bus Stops
+                        <span id="stops-badge-count" style="background: var(--ksrtc-primary); color: white; font-size: 0.75rem; padding: 2px 8px; border-radius: var(--radius-full);">0 Stops</span>
+                    </h3>
+                    <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">
+                        Verified geolocation waypoints across the Hubballi–Dharwad transit corridor.
+                    </p>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="stop-search-box" class="form-input" placeholder="🔍 Search stop by name..." oninput="filterStopsTable()" style="width: 220px; padding: 8px 12px; font-size: 0.85rem;">
+                    <select id="stop-city-filter" class="form-select" onchange="filterStopsTable()" style="width: 140px; padding: 8px 10px; font-size: 0.85rem;">
+                        <option value="all">All Cities</option>
+                        <option value="Hubballi">Hubballi</option>
+                        <option value="Dharwad">Dharwad</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Table of Bus Stops -->
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+                    <thead>
+                        <tr style="background: #f1f5f9; color: var(--ksrtc-dark); border-bottom: 2px solid var(--border-color);">
+                            <th style="padding: 10px 14px; width: 50px;">#</th>
+                            <th style="padding: 10px 14px;">Bus Stop Name</th>
+                            <th style="padding: 10px 14px; width: 120px;">City</th>
+                            <th style="padding: 10px 14px;">Address / Landmark</th>
+                            <th style="padding: 10px 14px; width: 180px;">Coordinates (Lat, Lng)</th>
+                            <th style="padding: 10px 14px; width: 120px; text-align: center;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stops-table-body">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                                Loading bus stops from database...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
     </main>
 
     <script src="/js/config.js"></script>
@@ -128,6 +174,8 @@
     <script>
         let pickerMap = null;
         let pickerMarker = null;
+        let allStopsList = [];
+        let stopMarkers = {};
 
         window.addEventListener('DOMContentLoaded', async () => {
             const user = await auth.guard('admin');
@@ -162,17 +210,91 @@
             try {
                 const res = await api.get('/routes/stops/all');
                 if (res && res.success) {
-                    res.stops.forEach(s => {
+                    allStopsList = res.stops || [];
+                    const badge = document.getElementById('stops-badge-count');
+                    if (badge) badge.textContent = `${allStopsList.length} Stops`;
+
+                    allStopsList.forEach(s => {
                         const m = L.circleMarker([s.latitude, s.longitude], {
-                            radius: 6,
-                            color: '#0056b3',
-                            fillColor: '#60a5fa',
-                            fillOpacity: 0.8
+                            radius: 7,
+                            color: s.city === 'Dharwad' ? '#059669' : '#0056b3',
+                            fillColor: s.city === 'Dharwad' ? '#34d399' : '#60a5fa',
+                            fillOpacity: 0.9,
+                            weight: 2
                         }).addTo(pickerMap);
-                        m.bindPopup(`<strong>${s.stop_name}</strong><br>${s.city}`);
+                        m.bindPopup(`<strong>${s.stop_name}</strong><br><span style="color: #64748b;">${s.city}</span><br><small>Lat: ${s.latitude}, Lng: ${s.longitude}</small>`);
+                        stopMarkers[s.id] = m;
                     });
+
+                    renderStopsTable(allStopsList);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error('Error loading stops:', e);
+            }
+        }
+
+        function renderStopsTable(stops) {
+            const tbody = document.getElementById('stops-table-body');
+            if (!tbody) return;
+
+            if (!stops || stops.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 24px; color: var(--text-muted);">No bus stops matched your filter.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = stops.map((s, idx) => {
+                const cityColor = s.city === 'Dharwad' ? '#059669' : '#0056b3';
+                const cityBg = s.city === 'Dharwad' ? '#d1fae5' : '#dbeafe';
+
+                return `
+                    <tr style="border-bottom: 1px solid var(--border-color); background: white; transition: background 0.15s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
+                        <td style="padding: 12px 14px; font-weight: 600; color: #64748b;">${idx + 1}</td>
+                        <td style="padding: 12px 14px;">
+                            <div style="font-weight: 600; color: var(--ksrtc-dark); font-size: 0.95rem;">${s.stop_name}</div>
+                        </td>
+                        <td style="padding: 12px 14px;">
+                            <span style="background: ${cityBg}; color: ${cityColor}; font-weight: 600; font-size: 0.78rem; padding: 3px 10px; border-radius: var(--radius-full);">
+                                ${s.city}
+                            </span>
+                        </td>
+                        <td style="padding: 12px 14px; color: #475569; font-size: 0.85rem;">
+                            ${s.address || 'Corridor Transit Stop'}
+                        </td>
+                        <td style="padding: 12px 14px; font-family: monospace; font-size: 0.82rem; color: #64748b;">
+                            ${parseFloat(s.latitude).toFixed(6)}, ${parseFloat(s.longitude).toFixed(6)}
+                        </td>
+                        <td style="padding: 12px 14px; text-align: center;">
+                            <button type="button" onclick="focusStopOnMap('${s.id}', ${s.latitude}, ${s.longitude})" 
+                                style="background: #f8fafc; border: 1px solid var(--border-color); color: var(--ksrtc-primary); padding: 5px 12px; border-radius: var(--radius-sm); font-size: 0.78rem; font-weight: 600; cursor: pointer;">
+                                📍 View
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function filterStopsTable() {
+            const search = (document.getElementById('stop-search-box')?.value || '').trim().toLowerCase();
+            const city = document.getElementById('stop-city-filter')?.value || 'all';
+
+            const filtered = allStopsList.filter(s => {
+                const matchesName = s.stop_name.toLowerCase().includes(search) || (s.address && s.address.toLowerCase().includes(search));
+                const matchesCity = city === 'all' || s.city.toLowerCase() === city.toLowerCase();
+                return matchesName && matchesCity;
+            });
+
+            renderStopsTable(filtered);
+        }
+
+        function focusStopOnMap(id, lat, lng) {
+            if (pickerMap) {
+                pickerMap.setView([lat, lng], 15);
+                if (stopMarkers[id]) {
+                    stopMarkers[id].openPopup();
+                }
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
         }
 
         async function loadRoutesCatalog() {
