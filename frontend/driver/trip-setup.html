@@ -235,6 +235,14 @@
                     }
                 });
             }
+
+            // 3. Auto-select first and last valid stops so driver is never blocked by empty selection
+            if (startSelect.options.length > 1 && !startSelect.value) {
+                startSelect.selectedIndex = 1;
+            }
+            if (destSelect.options.length > 1 && !destSelect.value) {
+                destSelect.selectedIndex = destSelect.options.length - 1;
+            }
         }
 
         function showAlert(msg, type = 'error') {
