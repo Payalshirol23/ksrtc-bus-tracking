@@ -211,6 +211,36 @@ async function getDriverAssignment(req, res) {
 
         const currentAssignment = assignments && assignments.length > 0 ? assignments[0] : null;
 
+        // Ensure driver always has stops to choose from even if route has 0 stops configured
+        if (currentAssignment && currentAssignment.bus) {
+            if (!currentAssignment.bus.route) {
+                currentAssignment.bus.route = {
+                    id: null,
+                    route_number: 'CORRIDOR',
+                    route_name: 'Hubballi-Dharwad Transit Corridor',
+                    route_stops: []
+                };
+            }
+
+            const rStops = currentAssignment.bus.route.route_stops;
+            if (!rStops || rStops.length === 0) {
+                const { data: allStops } = await supabaseAdmin
+                    .from('bus_stops')
+                    .select('*')
+                    .order('city', { ascending: true })
+                    .order('stop_name', { ascending: true });
+
+                if (allStops && allStops.length > 0) {
+                    currentAssignment.bus.route.route_stops = allStops.map((s, idx) => ({
+                        id: s.id,
+                        stop_sequence: idx + 1,
+                        direction: 'forward',
+                        stop: s
+                    }));
+                }
+            }
+        }
+
         // Check if there is an active trip already in progress
         let activeTrip = null;
         if (currentAssignment && currentAssignment.bus) {
