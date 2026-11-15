@@ -166,9 +166,10 @@
                 if (route) {
                     document.getElementById('setup-route-display').value = `${route.route_number} - ${route.route_name}`;
                     document.getElementById('setup-route-id').value = route.id;
-                    populateRouteStops(route.route_stops || []);
+                    await populateRouteStops(route.route_stops || []);
                 } else {
-                    document.getElementById('setup-route-display').value = 'Unassigned Route';
+                    document.getElementById('setup-route-display').value = 'Corridor Transit Route (All Stops)';
+                    await populateRouteStops([]);
                 }
 
             } catch (err) {
@@ -177,29 +178,63 @@
             }
         }
 
-        function populateRouteStops(stops) {
+        async function populateRouteStops(routeStops) {
             const startSelect = document.getElementById('setup-start-stop');
             const destSelect = document.getElementById('setup-dest-stop');
 
             startSelect.innerHTML = '<option value="">-- Origin Stop --</option>';
             destSelect.innerHTML = '<option value="">-- Terminating Stop --</option>';
 
-            stops.forEach((rs, idx) => {
-                const s = rs.stop;
-                if (!s) return;
+            // Fetch all available stops so newly created admin stops always appear!
+            let allStops = [];
+            try {
+                const sRes = await api.get('/routes/stops/all');
+                if (sRes && sRes.success) {
+                    allStops = sRes.stops || [];
+                }
+            } catch (e) {
+                console.warn('Could not fetch all stops:', e);
+            }
 
-                const opt1 = document.createElement('option');
-                opt1.value = s.id;
-                opt1.textContent = `${rs.stop_sequence}. ${s.stop_name} (${s.city})`;
-                if (idx === 0) opt1.selected = true;
-                startSelect.appendChild(opt1);
+            const addedIds = new Set();
 
-                const opt2 = document.createElement('option');
-                opt2.value = s.id;
-                opt2.textContent = `${rs.stop_sequence}. ${s.stop_name} (${s.city})`;
-                if (idx === stops.length - 1) opt2.selected = true;
-                destSelect.appendChild(opt2);
-            });
+            // 1. Populate configured route sequence stops first
+            if (routeStops && routeStops.length > 0) {
+                routeStops.forEach((rs, idx) => {
+                    const s = rs.stop;
+                    if (!s) return;
+                    addedIds.add(s.id);
+
+                    const opt1 = document.createElement('option');
+                    opt1.value = s.id;
+                    opt1.textContent = `${rs.stop_sequence}. ${s.stop_name} (${s.city})`;
+                    if (idx === 0) opt1.selected = true;
+                    startSelect.appendChild(opt1);
+
+                    const opt2 = document.createElement('option');
+                    opt2.value = s.id;
+                    opt2.textContent = `${rs.stop_sequence}. ${s.stop_name} (${s.city})`;
+                    if (idx === routeStops.length - 1) opt2.selected = true;
+                    destSelect.appendChild(opt2);
+                });
+            }
+
+            // 2. Include any other registered stops (including newly added admin stops)
+            if (allStops.length > 0) {
+                allStops.forEach(s => {
+                    if (!addedIds.has(s.id)) {
+                        const opt1 = document.createElement('option');
+                        opt1.value = s.id;
+                        opt1.textContent = `★ ${s.stop_name} (${s.city})`;
+                        startSelect.appendChild(opt1);
+
+                        const opt2 = document.createElement('option');
+                        opt2.value = s.id;
+                        opt2.textContent = `★ ${s.stop_name} (${s.city})`;
+                        destSelect.appendChild(opt2);
+                    }
+                });
+            }
         }
 
         function showAlert(msg, type = 'error') {
