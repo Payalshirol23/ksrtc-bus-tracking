@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSRTC — Live Bus Tracking | Hubballi–Dharwad</title>
+    <link rel="stylesheet" href="/css/ksrtc-theme.css">
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Supabase JS Client for Realtime WebSockets -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="ksrtc-header">
+        <a href="/passenger/home.html" class="ksrtc-brand">
+            <div class="ksrtc-logo-icon">K</div>
+            <div class="ksrtc-title-block">
+                <h1>KSRTC LOCAL BUS TRACKING</h1>
+                <span>Live Real-Time Telemetry</span>
+            </div>
+        </a>
+        <div class="ksrtc-nav-links">
+            <a href="/passenger/home.html" class="ksrtc-nav-link">Home</a>
+            <a href="/passenger/favourites.html" class="ksrtc-nav-link">Favourites</a>
+            <button class="btn-logout" onclick="auth.logout()">Logout</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container" style="padding-top: 16px;">
+        
+        <!-- Live Bus Telemetry Status Card -->
+        <div class="content-card" style="margin-bottom: 16px; padding: 18px 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                        <h2 id="bus-title" style="font-size: 1.4rem; color: var(--ksrtc-dark); font-weight: 700;">Loading Vehicle...</h2>
+                        <span id="gps-status-badge" class="badge badge-stale">Connecting GPS...</span>
+                        <span id="gps-mode-badge" class="badge" style="display: none;">REAL GPS</span>
+                    </div>
+                    <p id="route-path-text" style="font-size: 0.9rem; color: var(--text-secondary);">
+                        Corridor: Hubballi–Dharwad Transit Division
+                    </p>
+                </div>
+
+                <!-- Live Metrics Summary -->
+                <div style="display: flex; gap: 20px; font-size: 0.85rem; align-items: center;">
+                    <div style="text-align: right;">
+                        <span style="color: var(--text-muted); display: block;">Speed</span>
+                        <strong id="metric-speed" style="font-size: 1.1rem; color: var(--ksrtc-dark);">0.0 km/h</strong>
+                    </div>
+                    <div style="border-left: 1px solid var(--border-color); height: 28px;"></div>
+                    <div style="text-align: right;">
+                        <span style="color: var(--text-muted); display: block;">Last Fix Received</span>
+                        <strong id="metric-last-updated" style="font-size: 0.95rem; color: var(--text-primary);">Waiting...</strong>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Optional Boarding & Destination Summary Banner -->
+            <div id="journey-stops-banner" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 0.85rem; display: flex; gap: 24px;">
+                <div><span style="color: var(--text-muted);">Boarding:</span> <strong id="lbl-boarding-stop" style="color: #16a34a;">-</strong></div>
+                <div><span style="color: var(--text-muted);">Destination:</span> <strong id="lbl-destination-stop" style="color: #dc2626;">-</strong></div>
+            </div>
+        </div>
+
+        <!-- Interactive Leaflet Live Map Viewport -->
+        <div class="content-card" style="padding: 0; position: relative;">
+            <div id="live-map" class="map-viewport-container"></div>
+            
+            <!-- Realtime Floating Overlay Pill -->
+            <div style="position: absolute; top: 16px; right: 16px; z-index: 800; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(4px); padding: 6px 14px; border-radius: var(--radius-full); box-shadow: var(--shadow-md); font-size: 0.78rem; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                <span id="realtime-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #ea580c;"></span>
+                <span id="realtime-indicator-text">Realtime Engine: Synchronizing</span>
+            </div>
+        </div>
+
+    </main>
+
+    <script src="/js/config.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/map-helper.js"></script>
+    <script src="/js/realtime-tracker.js"></script>
+
+    <script>
+        let targetBusId = null;
+        let mapInstance = null;
+        let busMarker = null;
+        let busData = null;
+        let routePolyline = null;
+        let updateTimer = null;
+        let lastFixTimestamp = null;
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const user = await auth.guard('passenger');
+            if (!user) return;
+
+            const params = new URLSearchParams(window.location.search);
+            targetBusId = params.get('busId');
+            const fromStopId = params.get('from');
+            const toStopId = params.get('to');
+
+            if (!targetBusId) {
+                alert('No bus selected for tracking.');
+                window.location.href = '/passenger/home.html';
+                return;
+            }
+
+            // 1. Initialize Map centered on Hubballi–Dharwad
+            mapInstance = MapHelper.initMap('live-map');
+
+            // 2. Load bus details and route geometry
+            await loadBusAndRouteGeometry(targetBusId, fromStopId, toStopId);
+
+            // 3. Cold Start: Retrieve latest committed GPS coordinates immediately
+            await fetchColdStartLocation(targetBusId);
+
+            // 4. Subscribe to live WebSocket telemetry stream via Supabase Realtime
+            subscribeLiveStream(targetBusId);
+
+            // 5. Update timestamp elapsed clock every second
+            updateTimer = setInterval(refreshClockUI, 1000);
+        });
+
+        window.addEventListener('beforeunload', () => {
+            RealtimeTracker.unsubscribe();
+            if (updateTimer) clearInterval(updateTimer);
+        });
+
+        async function loadBusAndRouteGeometry(busId, fromStopId, toStopId) {
+            try {
+                const res = await api.get(`/buses/${busId}`);
+                if (!res || !res.success || !res.bus) {
+                    alert('Bus details could not be loaded.');
+                    return;
+                }
+
+                busData = res.bus;
+                document.getElementById('bus-title').textContent = `${busData.bus_number} (${busData.bus_type})`;
+
+                if (busData.route) {
+                    document.getElementById('route-path-text').textContent = 
+                        `Route ${busData.route.route_number}: ${busData.route.route_name}`;
+                    await loadRouteStopsOnMap(busData.route.id, fromStopId, toStopId);
+                }
+
+            } catch (err) {
+                console.error('Failed to load bus geometry:', err);
+            }
+        }
+
+        async function loadRouteStopsOnMap(routeId, fromStopId, toStopId) {
+            try {
+                const res = await api.get(`/routes/${routeId}`);
+                if (!res || !res.success || !res.route) return;
+
+                const stops = res.route.forward_stops || [];
+                const latlngs = [];
+
+                stops.forEach((item, index) => {
+                    const s = item.stop;
+                    const lat = parseFloat(s.latitude);
+                    const lng = parseFloat(s.longitude);
+                    latlngs.push([lat, lng]);
+
+                    let type = 'regular';
+                    if (fromStopId && s.id === fromStopId) {
+                        type = 'boarding';
+                        document.getElementById('journey-stops-banner').style.display = 'flex';
+                        document.getElementById('lbl-boarding-stop').textContent = s.stop_name;
+                    } else if (toStopId && s.id === toStopId) {
+                        type = 'destination';
+                        document.getElementById('journey-stops-banner').style.display = 'flex';
+                        document.getElementById('lbl-destination-stop').textContent = s.stop_name;
+                    } else if (index === 0) {
+                        type = 'boarding';
+                    } else if (index === stops.length - 1) {
+                        type = 'destination';
+                    }
+
+                    const marker = L.marker([lat, lng], {
+                        icon: MapHelper.createStopIcon(type, s.stop_name)
+                    }).addTo(mapInstance);
+
+                    marker.bindPopup(`<strong>${item.stop_sequence}. ${s.stop_name}</strong><br><small>${s.city}</small>`);
+                });
+
+                if (latlngs.length > 0) {
+                    routePolyline = MapHelper.drawRouteLine(mapInstance, latlngs, {
+                        color: '#0056b3',
+                        weight: 5
+                    });
+                }
+            } catch (e) {
+                console.error('Route stops map error:', e);
+            }
+        }
+
+        async function fetchColdStartLocation(busId) {
+            try {
+                const res = await api.get(`/locations/latest/${busId}`);
+                if (res && res.success && res.location) {
+                    handleNewLocation(res.location, false);
+                } else {
+                    document.getElementById('gps-status-badge').textContent = 'NO ACTIVE GPS SIGNAL';
+                    document.getElementById('gps-status-badge').className = 'badge badge-stale';
+                    document.getElementById('metric-last-updated').textContent = 'Awaiting driver...';
+                }
+            } catch (err) {
+                console.error('Cold start fetch error:', err);
+            }
+        }
+
+        function subscribeLiveStream(busId) {
+            const statusDot = document.getElementById('realtime-indicator-dot');
+            const statusText = document.getElementById('realtime-indicator-text');
+
+            RealtimeTracker.subscribeToBus(
+                busId,
+                (newLocation) => {
+                    handleNewLocation(newLocation, true);
+                },
+                (status) => {
+                    if (status === 'CONNECTED') {
+                        statusDot.style.background = '#16a34a';
+                        statusText.textContent = 'Supabase Realtime: Active (WebSocket)';
+                    } else if (status === 'RECONNECTING') {
+                        statusDot.style.background = '#ea580c';
+                        statusText.textContent = 'Realtime: Reconnecting...';
+                    }
+                }
+            );
+        }
+
+        function handleNewLocation(loc, isLiveUpdate = true) {
+            const lat = parseFloat(loc.latitude);
+            const lng = parseFloat(loc.longitude);
+            const heading = parseFloat(loc.heading) || 0;
+            const speed = parseFloat(loc.speed) || 0;
+            const isSimulated = (loc.trip && loc.trip.gps_mode === 'simulated') || (loc.speed === 38.5 && loc.accuracy === 5);
+
+            lastFixTimestamp = loc.gps_timestamp || loc.server_received_at;
+
+            // Update Metrics
+            document.getElementById('metric-speed').textContent = `${speed.toFixed(1)} km/h`;
+            refreshClockUI();
+
+            // Badges
+            const badge = document.getElementById('gps-status-badge');
+            badge.textContent = isSimulated ? '● SIMULATED GPS' : '● LIVE GPS ACTIVE';
+            badge.className = isSimulated ? 'badge badge-simulated' : 'badge badge-live';
+
+            const modeBadge = document.getElementById('gps-mode-badge');
+            modeBadge.style.display = 'inline-flex';
+            modeBadge.textContent = isSimulated ? 'SIMULATED MODE' : 'REAL SATELLITE GPS';
+            modeBadge.style.background = isSimulated ? '#fef3c7' : '#e0f2fe';
+            modeBadge.style.color = isSimulated ? '#b45309' : '#0369a1';
+
+            // Marker update
+            const busNumber = busData ? busData.bus_number : 'KSRTC';
+
+            if (!busMarker) {
+                busMarker = L.marker([lat, lng], {
+                    icon: MapHelper.createBusIcon(busNumber, heading, isSimulated)
+                }).addTo(mapInstance);
+
+                busMarker.bindPopup(`<strong>${busNumber}</strong><br>Status: Moving along corridor`);
+                mapInstance.setView([lat, lng], 14);
+            } else {
+                MapHelper.updateMarkerPosition(busMarker, lat, lng, heading, busNumber, isSimulated);
+                if (isLiveUpdate) {
+                    mapInstance.panTo([lat, lng], { animate: true, duration: 1.0 });
+                }
+            }
+        }
+
+        function refreshClockUI() {
+            if (!lastFixTimestamp) return;
+            const formatted = MapHelper.formatLocationAge(lastFixTimestamp);
+            document.getElementById('metric-last-updated').textContent = formatted;
+
+            // Check if signal has become stale (> 2 minutes)
+            const ageSec = Math.round((new Date().getTime() - new Date(lastFixTimestamp).getTime()) / 1000);
+            const badge = document.getElementById('gps-status-badge');
+            if (ageSec > 120 && !badge.textContent.includes('STALE')) {
+                badge.className = 'badge badge-stale';
+                badge.textContent = 'STALE GPS SIGNAL (> 2m ago)';
+            }
+        }
+    </script>
+</body>
+</html>

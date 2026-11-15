@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSRTC — Favourite Buses & Routes</title>
+    <link rel="stylesheet" href="/css/ksrtc-theme.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <header class="ksrtc-header">
+        <a href="/passenger/home.html" class="ksrtc-brand">
+            <div class="ksrtc-logo-icon">K</div>
+            <div class="ksrtc-title-block">
+                <h1>KSRTC LOCAL BUS TRACKING</h1>
+                <span>Saved Favourites</span>
+            </div>
+        </a>
+        <div class="ksrtc-nav-links">
+            <a href="/passenger/home.html" class="ksrtc-nav-link">Home</a>
+            <a href="/passenger/favourites.html" class="ksrtc-nav-link active">Favourites</a>
+            <a href="/passenger/account.html" class="ksrtc-nav-link">Account</a>
+            <button class="btn-logout" onclick="auth.logout()">Logout</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        <div class="content-card" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 style="font-size: 1.3rem; color: var(--ksrtc-dark);">⭐ My Favourite Routes & Buses</h2>
+                <p style="font-size: 0.85rem; color: var(--text-secondary);">Quick-launch live tracking for frequently commuted services</p>
+            </div>
+            <a href="/passenger/home.html" class="btn-primary" style="width: auto; padding: 8px 18px; text-decoration: none;">+ Browse Buses</a>
+        </div>
+
+        <div id="favourites-list" style="display: flex; flex-direction: column; gap: 14px;">
+            <!-- Populated dynamically -->
+        </div>
+    </main>
+
+    <script src="/js/config.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/auth.js"></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', async () => {
+            const user = await auth.guard('passenger');
+            if (!user) return;
+            await loadFavourites();
+        });
+
+        async function loadFavourites() {
+            const container = document.getElementById('favourites-list');
+            try {
+                const res = await api.get('/passengers/favourites');
+                if (!res || !res.success || res.favourites.length === 0) {
+                    container.innerHTML = `
+                        <div class="content-card" style="text-align: center; padding: 48px;">
+                            <div style="font-size: 2.5rem; margin-bottom: 12px;">⭐</div>
+                            <h3 style="color: var(--ksrtc-dark); margin-bottom: 6px;">No Saved Favourites Yet</h3>
+                            <p style="color: var(--text-secondary); margin-bottom: 16px;">Bookmark buses or routes to track them in one click.</p>
+                            <a href="/passenger/home.html" class="btn-primary" style="display: inline-flex; width: auto; padding: 10px 24px; text-decoration: none;">Explore Routes</a>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = res.favourites.map(fav => {
+                    const r = fav.route;
+                    const b = fav.bus;
+                    const title = b ? b.bus_number : (r ? `${r.route_number} - ${r.route_name}` : 'Transit Item');
+                    const subtitle = b ? `Type: ${b.bus_type}` : (r ? `${r.source} ➔ ${r.destination}` : '');
+
+                    return `
+                        <div class="content-card" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                            <div>
+                                <h3 style="font-size: 1.15rem; color: var(--ksrtc-dark); font-weight: 700; margin-bottom: 4px;">${title}</h3>
+                                <p style="font-size: 0.85rem; color: var(--text-secondary);">${subtitle}</p>
+                            </div>
+                            <div style="display: flex; gap: 10px;">
+                                ${b ? `<a href="/passenger/live-tracking.html?busId=${b.id}" class="btn-primary" style="width: auto; padding: 8px 16px; text-decoration: none;">Track Bus</a>` : ''}
+                                ${r ? `<a href="/passenger/route-details.html?routeId=${r.id}" class="btn-primary" style="width: auto; padding: 8px 16px; text-decoration: none;">View Route</a>` : ''}
+                                <button type="button" class="btn-logout" onclick="deleteFav('${fav.id}')" style="padding: 8px 14px;">Remove</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                console.error('Failed to load favourites:', err);
+            }
+        }
+
+        async function deleteFav(id) {
+            if (!confirm('Remove this favourite?')) return;
+            try {
+                const res = await api.delete(`/passengers/favourites/${id}`);
+                if (res && res.success) {
+                    await loadFavourites();
+                }
+            } catch (err) {
+                console.error('Delete error:', err);
+            }
+        }
+    </script>
+</body>
+</html>

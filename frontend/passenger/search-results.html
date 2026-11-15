@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSRTC — Bus Search Results | Hubballi–Dharwad</title>
+    <link rel="stylesheet" href="/css/ksrtc-theme.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <header class="ksrtc-header">
+        <a href="/passenger/home.html" class="ksrtc-brand">
+            <div class="ksrtc-logo-icon">K</div>
+            <div class="ksrtc-title-block">
+                <h1>KSRTC LOCAL BUS TRACKING</h1>
+                <span>Bus Search Results</span>
+            </div>
+        </a>
+        <div class="ksrtc-nav-links">
+            <a href="/passenger/home.html" class="ksrtc-nav-link">Home</a>
+            <a href="/passenger/favourites.html" class="ksrtc-nav-link">Favourites</a>
+            <a href="/passenger/account.html" class="ksrtc-nav-link">Account</a>
+            <button class="btn-logout" onclick="auth.logout()">Logout</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        
+        <!-- Search Context Header -->
+        <div class="content-card" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+                <a href="/passenger/home.html" style="color: var(--ksrtc-primary); text-decoration: none; font-size: 0.85rem; font-weight: 600;">← Modify Search</a>
+                <h2 id="search-title" style="font-size: 1.3rem; color: var(--ksrtc-dark); margin-top: 4px;">Searching Buses...</h2>
+                <p id="search-subtext" style="font-size: 0.85rem; color: var(--text-secondary);"></p>
+            </div>
+            <span id="results-count-badge" class="badge badge-live">Scanning routes...</span>
+        </div>
+
+        <!-- Search Results Grid -->
+        <div id="results-container" style="display: flex; flex-direction: column; gap: 16px;">
+            <!-- Rendered dynamically -->
+        </div>
+
+    </main>
+
+    <script src="/js/config.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/auth.js"></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', async () => {
+            const user = await auth.guard('passenger');
+            if (!user) return;
+
+            const params = new URLSearchParams(window.location.search);
+            const fromStopId = params.get('from');
+            const toStopId = params.get('to');
+            const query = params.get('q');
+
+            if (fromStopId && toStopId) {
+                await searchBetweenStops(fromStopId, toStopId);
+            } else if (query) {
+                await searchDirectQuery(query);
+            } else {
+                window.location.href = '/passenger/home.html';
+            }
+        });
+
+        async function searchBetweenStops(fromId, toId) {
+            const titleEl = document.getElementById('search-title');
+            const subtextEl = document.getElementById('search-subtext');
+            const badgeEl = document.getElementById('results-count-badge');
+            const container = document.getElementById('results-container');
+
+            try {
+                // Fetch stop details for header display
+                const stopsRes = await api.get('/routes/stops/all');
+                let fromName = 'Selected Stop';
+                let toName = 'Destination';
+
+                if (stopsRes && stopsRes.success) {
+                    const s1 = stopsRes.stops.find(s => s.id === fromId);
+                    const s2 = stopsRes.stops.find(s => s.id === toId);
+                    if (s1) fromName = s1.stop_name;
+                    if (s2) toName = s2.stop_name;
+                }
+
+                titleEl.textContent = `${fromName} ➔ ${toName}`;
+                subtextEl.textContent = `Showing all scheduled buses whose routes serve this origin and destination`;
+
+                // Execute stop-pair search
+                const res = await api.get('/buses/search-by-stops', {
+                    boarding_stop_id: fromId,
+                    destination_stop_id: toId
+                });
+
+                if (!res || !res.success || res.buses.length === 0) {
+                    badgeEl.textContent = '0 Buses Found';
+                    badgeEl.className = 'badge badge-stale';
+                    container.innerHTML = `
+                        <div class="content-card" style="text-align: center; padding: 48px;">
+                            <div style="font-size: 2.5rem; margin-bottom: 12px;">🚏</div>
+                            <h3 style="color: var(--ksrtc-dark); margin-bottom: 8px;">No Direct Buses Configured</h3>
+                            <p style="color: var(--text-secondary); max-width: 450px; margin: 0 auto 16px;">
+                                No configured KSRTC bus routes currently serve both <strong>${fromName}</strong> and <strong>${toName}</strong> in this direction.
+                            </p>
+                            <a href="/passenger/home.html" class="btn-primary" style="display: inline-flex; width: auto; padding: 10px 24px; text-decoration: none;">
+                                Try Another Search
+                            </a>
+                        </div>
+                    `;
+                    return;
+                }
+
+                badgeEl.textContent = `${res.buses.length} Bus(es) Available`;
+
+                container.innerHTML = res.buses.map(bus => {
+                    const isGpsActive = bus.gps_active;
+                    const r = bus.route;
+
+                    return `
+                        <div class="content-card" style="margin-bottom: 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+                                <div>
+                                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                                        <h3 style="font-size: 1.25rem; color: var(--ksrtc-dark); font-weight: 700;">${bus.bus_number}</h3>
+                                        <span class="badge" style="background: #e0f2fe; color: #0369a1;">${bus.bus_type}</span>
+                                        <span class="badge ${isGpsActive ? 'badge-live' : 'badge-stale'}">
+                                            ${isGpsActive ? '● LIVE GPS ACTIVE' : 'NO GPS / IDLE'}
+                                        </span>
+                                    </div>
+                                    <p style="font-size: 0.9rem; color: var(--text-secondary);">
+                                        <strong>Route ${r ? r.route_number : ''}:</strong> ${r ? r.route_name : 'Local Service'}
+                                    </p>
+                                </div>
+
+                                <div style="display: flex; gap: 10px;">
+                                    <a href="/passenger/live-tracking.html?busId=${bus.id}&from=${fromId}&to=${toId}" class="btn-primary" style="width: auto; padding: 10px 20px; text-decoration: none;">
+                                        📍 Track Live Bus
+                                    </a>
+                                    ${r ? `
+                                        <a href="/passenger/route-details.html?routeId=${r.id}" class="btn-primary" style="width: auto; padding: 10px 18px; background: #e2e8f0; color: #1e293b; text-decoration: none;">
+                                            Route Stops
+                                        </a>
+                                    ` : ''}
+                                </div>
+                            </div>
+
+                            <div style="background: #f8fafc; border-radius: var(--radius-md); padding: 12px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.85rem;">
+                                <div>
+                                    <span style="color: var(--text-muted); display: block;">Boarding At:</span>
+                                    <strong style="color: #16a34a;">🟢 ${fromName}</strong>
+                                </div>
+                                <div>
+                                    <span style="color: var(--text-muted); display: block;">Alighting At:</span>
+                                    <strong style="color: #dc2626;">🔴 ${toName}</strong>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                console.error('Search failed:', err);
+                container.innerHTML = `<div class="content-card" style="color: red;">Search query failed. Please verify server connection.</div>`;
+            }
+        }
+
+        async function searchDirectQuery(query) {
+            const titleEl = document.getElementById('search-title');
+            const subtextEl = document.getElementById('search-subtext');
+            const badgeEl = document.getElementById('results-count-badge');
+            const container = document.getElementById('results-container');
+
+            titleEl.textContent = `Search: "${query}"`;
+            subtextEl.textContent = `Matching bus numbers, route names, or terminals`;
+
+            try {
+                const res = await api.get('/buses/search', { query });
+                if (!res || !res.success || res.buses.length === 0) {
+                    badgeEl.textContent = '0 Matches';
+                    badgeEl.className = 'badge badge-stale';
+                    container.innerHTML = `
+                        <div class="content-card" style="text-align: center; padding: 48px;">
+                            <div style="font-size: 2.5rem; margin-bottom: 12px;">🔍</div>
+                            <h3 style="color: var(--ksrtc-dark);">No Buses or Routes Match "${query}"</h3>
+                            <p style="color: var(--text-secondary); margin-bottom: 16px;">Try searching for "KA-25", "100-HD", "BRTS", or "Hubballi".</p>
+                            <a href="/passenger/home.html" class="btn-primary" style="display: inline-flex; width: auto; padding: 10px 24px; text-decoration: none;">New Search</a>
+                        </div>
+                    `;
+                    return;
+                }
+
+                badgeEl.textContent = `${res.buses.length} Match(es)`;
+
+                container.innerHTML = res.buses.map(bus => `
+                    <div class="content-card" style="margin-bottom: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h3 style="font-size: 1.2rem; color: var(--ksrtc-dark); font-weight: 700; margin-bottom: 4px;">${bus.bus_number}</h3>
+                                <p style="font-size: 0.88rem; color: var(--text-secondary);">
+                                    <strong>${bus.bus_type}</strong> • Route: ${bus.route ? `${bus.route.route_number} (${bus.route.source} to ${bus.route.destination})` : 'Unassigned'}
+                                </p>
+                            </div>
+                            <a href="/passenger/live-tracking.html?busId=${bus.id}" class="btn-primary" style="width: auto; padding: 10px 20px; text-decoration: none;">
+                                📍 Track Live Bus
+                            </a>
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (err) {
+                console.error('Direct search failed:', err);
+                container.innerHTML = `<div class="content-card" style="color: red;">Failed to retrieve query results.</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

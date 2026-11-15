@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSRTC — Transit Notifications & Alerts</title>
+    <link rel="stylesheet" href="/css/ksrtc-theme.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <header class="ksrtc-header">
+        <a href="/passenger/home.html" class="ksrtc-brand">
+            <div class="ksrtc-logo-icon">K</div>
+            <div class="ksrtc-title-block">
+                <h1>KSRTC LOCAL BUS TRACKING</h1>
+                <span>Transit Alerts</span>
+            </div>
+        </a>
+        <div class="ksrtc-nav-links">
+            <a href="/passenger/home.html" class="ksrtc-nav-link">Home</a>
+            <a href="/passenger/favourites.html" class="ksrtc-nav-link">Favourites</a>
+            <a href="/passenger/notifications.html" class="ksrtc-nav-link active">Alerts</a>
+            <a href="/passenger/account.html" class="ksrtc-nav-link">Account</a>
+            <button class="btn-logout" onclick="auth.logout()">Logout</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        <div class="content-card">
+            <h2 style="font-size: 1.3rem; color: var(--ksrtc-dark); margin-bottom: 4px;">🔔 Commuter Alerts & Advisories</h2>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Updates regarding Hubballi–Dharwad corridor transit schedules and delays</p>
+        </div>
+
+        <div id="notifications-list" style="display: flex; flex-direction: column; gap: 14px;">
+            <!-- Populated dynamically -->
+        </div>
+    </main>
+
+    <script src="/js/config.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/auth.js"></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', async () => {
+            const user = await auth.guard('passenger');
+            if (!user) return;
+            await loadNotifications();
+        });
+
+        async function loadNotifications() {
+            const container = document.getElementById('notifications-list');
+            try {
+                const res = await api.get('/passengers/notifications');
+                if (!res || !res.success || res.notifications.length === 0) {
+                    container.innerHTML = `
+                        <div class="content-card" style="text-align: center; padding: 48px;">
+                            <div style="font-size: 2.5rem; margin-bottom: 12px;">📭</div>
+                            <h3 style="color: var(--ksrtc-dark); margin-bottom: 6px;">No Notifications</h3>
+                            <p style="color: var(--text-secondary);">You're all caught up! Real-time alerts will appear here.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = res.notifications.map(n => `
+                    <div class="content-card" style="margin-bottom: 0; border-left: 4px solid ${n.is_read ? '#cbd5e1' : '#0056b3'};">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                            <h4 style="font-size: 1.05rem; color: var(--ksrtc-dark); font-weight: 700;">${n.title}</h4>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">${new Date(n.created_at).toLocaleString()}</span>
+                        </div>
+                        <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 10px;">${n.message}</p>
+                        ${!n.is_read ? `
+                            <button type="button" class="btn-primary" onclick="markRead('${n.id}')" style="width: auto; padding: 4px 12px; font-size: 0.75rem;">
+                                Mark as Read
+                            </button>
+                        ` : '<span style="font-size: 0.75rem; color: #16a34a;">✓ Read</span>'}
+                    </div>
+                `).join('');
+
+            } catch (err) {
+                console.error('Notifications error:', err);
+            }
+        }
+
+        async function markRead(id) {
+            try {
+                await api.patch(`/passengers/notifications/${id}/read`);
+                await loadNotifications();
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>
