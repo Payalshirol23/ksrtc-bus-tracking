@@ -310,14 +310,83 @@
                     <div style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; background: #f8fafc;">
                         <div>
                             <strong style="color: var(--ksrtc-primary); font-size: 0.95rem;">${r.route_number}</strong>: ${r.route_name}
-                            <span style="display: block; font-size: 0.75rem; color: var(--text-muted);">${r.stops_count} configured stops</span>
+                            <span style="display: block; font-size: 0.75rem; color: ${r.stops_count > 0 ? '#059669' : '#dc2626'}; font-weight: 600;">
+                                ${r.stops_count} configured stops ${r.stops_count === 0 ? '⚠️ (Needs Stops)' : '✅'}
+                            </span>
                         </div>
-                        <a href="/passenger/route-details.html?routeId=${r.id}" class="btn-primary" style="width: auto; padding: 4px 12px; font-size: 0.78rem; text-decoration: none;">View Path</a>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            ${r.stops_count === 0 ? `
+                                <button type="button" onclick="autoLinkStops('${r.id}', '${r.route_number}')" class="btn-primary" style="width: auto; padding: 5px 12px; font-size: 0.78rem; background: #059669; border-color: #059669;">
+                                    ⚡ Link Stops
+                                </button>
+                            ` : ''}
+                            <a href="/passenger/route-details.html?routeId=${r.id}" class="btn-primary" style="width: auto; padding: 5px 12px; font-size: 0.78rem; text-decoration: none;">View Path</a>
+                        </div>
                     </div>
                 `).join('');
 
             } catch (err) {
                 console.error('Routes catalog error:', err);
+            }
+        }
+
+        async function autoLinkStops(routeId, routeNumber) {
+            try {
+                const stopsRes = await api.get('/routes/stops/all');
+                if (!stopsRes || !stopsRes.success || !stopsRes.stops) {
+                    alert('Could not fetch stops directory.');
+                    return;
+                }
+
+                const allStops = stopsRes.stops;
+                let sequencedStops = [];
+
+                if (routeNumber === '100-DH') {
+                    // Reverse route: Dharwad CBT to Hubballi CBT (all 13 stops in reverse order)
+                    const reverseOrder = [
+                        'Dharwad CBT', 'Jubilee Circle', 'Gandhinagar', 'Navalur', 'Sattur',
+                        'Rayapur', 'Navanagar', 'Amargol', 'Bairidevarkoppa', 'Unkal Lake',
+                        'BVB College', 'Keshwapur', 'Hubballi CBT'
+                    ];
+
+                    reverseOrder.forEach((keyword, idx) => {
+                        const matched = allStops.find(s => s.stop_name.toLowerCase().includes(keyword.toLowerCase()));
+                        if (matched && !sequencedStops.some(item => item.stop_id === matched.id)) {
+                            sequencedStops.push({ stop_id: matched.id, stop_sequence: sequencedStops.length + 1 });
+                        }
+                    });
+                } else if (routeNumber.includes('SDM')) {
+                    // SDMCET to Toll Naka corridor
+                    const sdmOrder = ['SDMCET', 'Sattur', 'Navalur', 'Gandhinagar', 'Toll', 'Dharwad'];
+                    sdmOrder.forEach((keyword) => {
+                        const matched = allStops.find(s => s.stop_name.toLowerCase().includes(keyword.toLowerCase()));
+                        if (matched && !sequencedStops.some(item => item.stop_id === matched.id)) {
+                            sequencedStops.push({ stop_id: matched.id, stop_sequence: sequencedStops.length + 1 });
+                        }
+                    });
+                }
+
+                // Fallback for any other route: attach available corridor stops
+                if (sequencedStops.length === 0) {
+                    allStops.slice(0, 10).forEach((s, idx) => {
+                        sequencedStops.push({ stop_id: s.id, stop_sequence: idx + 1 });
+                    });
+                }
+
+                const saveRes = await api.post(`/routes/${routeId}/stops`, {
+                    stops: sequencedStops,
+                    direction: 'forward'
+                });
+
+                if (saveRes && saveRes.success) {
+                    alert(`✅ Successfully linked ${sequencedStops.length} stops to ${routeNumber}!`);
+                    await loadRoutesCatalog();
+                } else {
+                    alert('Error linking stops: ' + (saveRes ? saveRes.message : 'Unknown error'));
+                }
+            } catch (err) {
+                console.error('Auto-link stops error:', err);
+                alert('Server error while linking stops.');
             }
         }
 
